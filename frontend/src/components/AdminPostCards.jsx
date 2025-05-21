@@ -1,3 +1,4 @@
+// AdminPostCards.jsx (updated)
 import React, { useEffect, useState, useCallback, useContext } from "react";
 import {
   Avatar,
@@ -7,12 +8,24 @@ import {
   Menu,
   MenuItem,
   Skeleton,
+  Tooltip,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  Button,
 } from "@mui/material";
 import { useNavigate } from "react-router-dom";
 import {
   MoreVert,
   Download,
   Verified as VerifiedIcon,
+  Favorite as FavoriteIcon,
+  Comment as CommentIcon,
+  Share as ShareIcon,
+  Bookmark as BookmarkIcon,
+  Edit as EditIcon,
+  Delete as DeleteIcon,
 } from "@mui/icons-material";
 import { formatDistanceToNow } from "date-fns";
 import useShowToast from "../hooks/useShowToast";
@@ -35,6 +48,9 @@ const AdminPostCards = () => {
   const [isLoading, setIsLoading] = useState(true);
   const [anchorEl, setAnchorEl] = useState(null);
   const [selectedPostId, setSelectedPostId] = useState(null);
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [dialogAction, setDialogAction] = useState(null);
+  const [dialogPostId, setDialogPostId] = useState(null);
   const showToast = useShowToast();
   const currentUser = useRecoilValue(userAtom);
   const [posts, setPosts] = useRecoilState(postsAtom);
@@ -81,7 +97,7 @@ const AdminPostCards = () => {
     const handleUpdate = (postId, updatedPost) => {
       setPosts((prev) => ({
         ...prev,
-        posts: prev.posts.map((p) => (p._id === postId ? updatedPost : p)),
+        posts: prev.posts.map((p) => (p._id === postId ? { ...updatedPost, comments: updatedPost.comments || [], likes: updatedPost.likes || [], shares: updatedPost.shares || [], bookmarks: updatedPost.bookmarks || [] } : p)),
       }));
     };
 
@@ -96,7 +112,8 @@ const AdminPostCards = () => {
 
   const handleBanUnbanPost = async (postId, isBanned) => {
     try {
-      const res = await fetch(`/api/admin/posts/${postId}/${isBanned ? "unban" : "ban"}`, {
+      const endpoint = `/api/admin/posts/${postId}/${isBanned ? "unban" : "ban"}`;
+      const res = await fetch(endpoint, {
         method: "PUT",
         headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
         credentials: "include",
@@ -137,6 +154,26 @@ const AdminPostCards = () => {
     setSelectedPostId(null);
   };
 
+  const handleDialogOpen = (postId, action) => {
+    setDialogPostId(postId);
+    setDialogAction(action);
+    setDialogOpen(true);
+  };
+
+  const handleDialogClose = () => {
+    setDialogOpen(false);
+    setDialogPostId(null);
+    setDialogAction(null);
+  };
+
+  const handleDialogConfirm = () => {
+    if (dialogPostId && dialogAction) {
+      handleBanUnbanPost(dialogPostId, dialogAction === "ban" ? false : true);
+    }
+    handleDialogClose();
+    handleMoreClose();
+  };
+
   const getDocumentIcon = (filename) => {
     const ext = filename?.split(".").pop()?.toLowerCase() || "";
     switch (ext) {
@@ -157,238 +194,319 @@ const AdminPostCards = () => {
   const renderPost = (post, postUser) => {
     if (!postUser) return null;
 
+    const comments = post.comments || [];
+    const likes = post.likes || [];
+    const shares = post.shares || [];
+    const bookmarks = post.bookmarks || [];
+
     return (
-      <Box
+      <motion.div
+        whileHover={{ scale: 1.02, boxShadow: "0 8px 40px rgba(0, 0, 0, 0.15)" }}
+        transition={{ duration: 0.2 }}
+        style={{ width: "100%" }}
         key={post._id}
-        mb={4}
-        sx={{
-          width: { xs: "100%", sm: "90%", md: "600px" },
-          maxWidth: "600px",
-          minHeight: { xs: "auto", sm: "350px", md: "400px" },
-          mx: { xs: 0, sm: "auto" },
-          background: "rgba(255, 255, 255, 0.2)",
-          backdropFilter: "blur(10px)",
-          borderRadius: "16px",
-          border: "1px solid rgba(255, 255, 255, 0.2)",
-          padding: { xs: 1, sm: 2, md: 2.5 },
-          boxShadow: "0 4px 30px rgba(0, 0, 0, 0.1)",
-          display: "flex",
-          flexDirection: "column",
-          justifyContent: "space-between",
-          position: "relative",
-        }}
       >
-        {post.isBanned && (
-          <Typography
-            sx={{
-              position: "absolute",
-              top: 10,
-              left: 10,
-              color: "red",
-              fontWeight: "bold",
-              background: "rgba(255, 255, 255, 0.7)",
-              p: 1,
-              borderRadius: 2,
-              zIndex: 10,
-            }}
-          >
-            Banned by Admin
-          </Typography>
-        )}
-        <Typography variant="caption" color="text.primary" mb={1}>
-          Post ID: {post._id}
-        </Typography>
-        <Box display="flex" justifyContent="space-between" alignItems="center">
-          <Box display="flex" alignItems="center" gap={1}>
-            <Avatar
-              sx={{ width: 48, height: 48, cursor: "pointer" }}
-              alt={postUser.name || "User"}
-              src={postUser.profilePic}
-              onClick={(e) => {
-                e.preventDefault();
-                navigate(`/${postUser.username}`);
+        <Box
+          mb={4}
+          sx={{
+            width: { xs: "100%", sm: "90%", md: "600px" },
+            maxWidth: "600px",
+            minHeight: { xs: "auto", sm: "350px", md: "400px" },
+            mx: { xs: 0, sm: "auto" },
+            background: "linear-gradient(135deg, rgba(255, 255, 255, 0.2), rgba(255, 255, 255, 0.1))",
+            backdropFilter: "blur(12px)",
+            borderRadius: "20px",
+            border: "1px solid rgba(255, 255, 255, 0.3)",
+            padding: { xs: 2, sm: 3, md: 3.5 },
+            boxShadow: "0 6px 20px rgba(0, 0, 0, 0.12)",
+            display: "flex",
+            flexDirection: "column",
+            justifyContent: "space-between",
+            position: "relative",
+            transition: "all 0.3s ease",
+          }}
+        >
+          {post.isBanned && (
+            <Typography
+              sx={{
+                position: "absolute",
+                top: 12,
+                left: 12,
+                color: "#ff4d4f",
+                fontWeight: 600,
+                background: "rgba(255, 255, 255, 0.8)",
+                px: 2,
+                py: 0.5,
+                borderRadius: 2,
+                zIndex: 10,
+                fontSize: { xs: "0.75rem", sm: "0.875rem" },
               }}
-            />
-            <Box>
-              <Typography
-                variant="body2"
-                fontWeight="bold"
-                color="text.primary"
-                sx={{ cursor: "pointer", fontSize: "14px" }}
+            >
+              Banned by Admin
+            </Typography>
+          )}
+          <Typography
+            variant="caption"
+            color="text.secondary"
+            mb={2}
+            sx={{ fontSize: { xs: "0.75rem", sm: "0.875rem" }, fontWeight: 500 }}
+          >
+            Post ID: {post._id}
+          </Typography>
+          <Box display="flex" justifyContent="space-between" alignItems="center">
+            <Box display="flex" alignItems="center" gap={1.5}>
+              <Avatar
+                sx={{ width: { xs: 40, sm: 48 }, height: { xs: 40, sm: 48 }, cursor: "pointer" }}
+                alt={postUser.name || "User"}
+                src={postUser.profilePic}
                 onClick={(e) => {
                   e.preventDefault();
                   navigate(`/${postUser.username}`);
                 }}
-              >
-                {postUser.name}
-              </Typography>
-              <Typography
-                variant="caption"
-                color="#8E8E8E"
-                sx={{ fontSize: "12px" }}
-              >
-                @{postUser.username} • {formatDistanceToNow(new Date(post.createdAt))} ago
-                {post.isEdited && " (Edited)"}
-              </Typography>
-            </Box>
-            {postUser.isVerified && (
-              <VerifiedIcon color="primary" fontSize="small" sx={{ ml: 0.5 }} />
-            )}
-          </Box>
-          <IconButton onClick={(e) => handleMoreClick(e, post._id)} size="small">
-            <MoreVert sx={{ color: "text.primary", fontSize: 20 }} />
-          </IconButton>
-          <Menu
-            anchorEl={anchorEl}
-            open={Boolean(anchorEl) && selectedPostId === post._id}
-            onClose={handleMoreClose}
-          >
-            <MenuItem
-              onClick={() => {
-                handleBanUnbanPost(post._id, post.isBanned);
-                handleMoreClose();
-              }}
-            >
-              {post.isBanned ? (
-                <>
-                  <Edit sx={{ mr: 1 }} /> Unban
-                </>
-              ) : (
-                <>
-                  <Delete sx={{ mr: 1 }} /> Ban
-                </>
-              )}
-            </MenuItem>
-            <MenuItem
-              onClick={() => {
-                handleDownloadPost(post);
-                handleMoreClose();
-              }}
-            >
-              <Download sx={{ mr: 1 }} /> Download
-            </MenuItem>
-          </Menu>
-        </Box>
-
-        <Box sx={{ display: "flex", flexDirection: "column", alignItems: "center", mt: 2, flex: 1 }}>
-          <Typography
-            variant="body2"
-            color="text.primary"
-            sx={{ fontSize: "14px", wordBreak: "break-word" }}
-          >
-            {post.text}
-          </Typography>
-
-          {post.media && (
-            <Box
-              sx={{
-                display: "flex",
-                justifyContent: "center",
-                alignItems: "center",
-                mt: 2,
-                width: "100%",
-                height: {
-                  xs: post.mediaType === "audio" || post.mediaType === "document" ? "auto" : "180px",
-                  sm: post.mediaType === "audio" || post.mediaType === "document" ? "auto" : "250px",
-                  md: post.mediaType === "audio" || post.mediaType === "document" ? "auto" : "300px",
-                },
-                borderRadius: "8px",
-                overflow: "hidden",
-              }}
-            >
-              {post.mediaType === "image" && (
-                <>
-                  <img
-                    src={post.media}
-                    alt="Post"
-                    style={{ width: "100%", height: "100%", objectFit: "cover" }}
-                  />
-                  {post.isEdited && (
-                    <Typography
-                      sx={{
-                        position: "absolute",
-                        bottom: 10,
-                        right: 10,
-                        bgcolor: "rgba(0, 0, 0, 0.6)",
-                        color: "white",
-                        p: "2px 8px",
-                        borderRadius: 2,
-                        fontSize: "12px",
-                      }}
-                    >
-                      Edited
-                    </Typography>
+                aria-label={`View ${postUser.name}'s profile`}
+              />
+              <Box>
+                <Typography
+                  variant="h6"
+                  fontWeight="bold"
+                  color="text.primary"
+                  sx={{ cursor: "pointer", fontSize: { xs: "1rem", sm: "1.25rem" } }}
+                  onClick={(e) => {
+                    e.preventDefault();
+                    navigate(`/${postUser.username}`);
+                  }}
+                >
+                  {postUser.name}
+                  {postUser.isVerified && (
+                    <VerifiedIcon
+                      color="primary"
+                      fontSize="small"
+                      sx={{ ml: 0.5, verticalAlign: "middle" }}
+                      aria-label="Verified user"
+                    />
                   )}
-                </>
-              )}
-              {post.mediaType === "video" && (
-                <video
-                  src={post.media}
-                  controls
-                  style={{ width: "100%", height: "100%", objectFit: "cover" }}
-                />
-              )}
-              {post.mediaType === "audio" && (
-                <Box sx={{ width: "100%", px: 2, py: 1, display: "flex", justifyContent: "center" }}>
-                  <audio
+                </Typography>
+                <Typography
+                  variant="caption"
+                  color="text.secondary"
+                  sx={{ fontSize: { xs: "0.75rem", sm: "0.875rem" } }}
+                >
+                  @{postUser.username} • {formatDistanceToNow(new Date(post.createdAt), { addSuffix: true })}
+                  {post.isEdited && " (Edited)"}
+                </Typography>
+              </Box>
+            </Box>
+            <IconButton
+              onClick={(e) => handleMoreClick(e, post._id)}
+              size="small"
+              aria-label="More actions"
+              sx={{ color: "text.primary" }}
+            >
+              <MoreVert sx={{ fontSize: { xs: 24, sm: 28 } }} />
+            </IconButton>
+            <Menu
+              anchorEl={anchorEl}
+              open={Boolean(anchorEl) && selectedPostId === post._id}
+              onClose={handleMoreClose}
+              PaperProps={{
+                sx: {
+                  background: "rgba(255, 255, 255, 0.95)",
+                  backdropFilter: "blur(8px)",
+                  borderRadius: 2,
+                  boxShadow: "0 4px 20px rgba(0, 0, 0, 0.1)",
+                },
+              }}
+            >
+              <MenuItem
+                onClick={() => handleDialogOpen(post._id, post.isBanned ? "unban" : "ban")}
+                sx={{ fontSize: "0.875rem", py: 1.5 }}
+              >
+                {post.isBanned ? (
+                  <>
+                    <EditIcon sx={{ mr: 1, fontSize: 20 }} /> Unban Post
+                  </>
+                ) : (
+                  <>
+                    <DeleteIcon sx={{ mr: 1, fontSize: 20 }} /> Ban Post
+                  </>
+                )}
+              </MenuItem>
+              <MenuItem
+                onClick={() => {
+                  handleDownloadPost(post);
+                  handleMoreClose();
+                }}
+                sx={{ fontSize: "0.875rem", py: 1.5 }}
+              >
+                <Download sx={{ mr: 1, fontSize: 20 }} /> Download
+              </MenuItem>
+            </Menu>
+          </Box>
+
+          <Box sx={{ display: "flex", flexDirection: "column", alignItems: "center", mt: 3, flex: 1 }}>
+            <Typography
+              variant="body1"
+              color="text.primary"
+              sx={{ fontSize: { xs: "0.875rem", sm: "1rem" }, wordBreak: "break-word", lineHeight: 1.6 }}
+            >
+              {post.text}
+            </Typography>
+
+            {post.media && (
+              <Box
+                sx={{
+                  display: "flex",
+                  justifyContent: "center",
+                  alignItems: "center",
+                  mt: 3,
+                  width: "100%",
+                  maxHeight: {
+                    xs: post.mediaType === "audio" || post.mediaType === "document" ? "auto" : "200px",
+                    sm: post.mediaType === "audio" || post.mediaType === "document" ? "auto" : "300px",
+                    md: post.mediaType === "audio" || post.mediaType === "document" ? "auto" : "350px",
+                  },
+                  borderRadius: "12px",
+                  overflow: "hidden",
+                  bgcolor: "rgba(0, 0, 0, 0.05)",
+                  position: "relative",
+                }}
+              >
+                {post.mediaType === "image" && (
+                  <>
+                    <img
+                      src={post.media}
+                      alt="Post media"
+                      style={{ width: "100%", height: "100%", objectFit: "cover" }}
+                      loading="lazy"
+                    />
+                    {post.isEdited && (
+                      <Typography
+                        sx={{
+                          position: "absolute",
+                          bottom: 10,
+                          right: 10,
+                          bgcolor: "rgba(0, 0, 0, 0.6)",
+                          color: "white",
+                          p: "4px 12px",
+                          borderRadius: 2,
+                          fontSize: { xs: "0.75rem", sm: "0.875rem" },
+                        }}
+                      >
+                        Edited
+                      </Typography>
+                    )}
+                  </>
+                )}
+                {post.mediaType === "video" && (
+                  <video
                     src={post.media}
                     controls
-                    style={{ width: "100%", maxWidth: "400px" }}
+                    style={{ width: "100%", height: "100%", objectFit: "cover" }}
+                    loading="lazy"
                   />
-                </Box>
-              )}
-              {post.mediaType === "document" && (
-                <Box sx={{ display: "flex", alignItems: "center", justifyContent: "center", p: 2, width: "100%" }}>
-                  <Box display="flex" alignItems="center" gap={1}>
-                    {getDocumentIcon(getFileName(post))}
-                    <Typography
-                      color="text.primary"
-                      sx={{ fontSize: "14px", wordBreak: "break-word", textAlign: "center" }}
-                    >
-                      {getFileName(post)}
-                    </Typography>
+                )}
+                {post.mediaType === "audio" && (
+                  <Box sx={{ width: "100%", px: { xs: 2, sm: 3 }, py: 2, display: "flex", justifyContent: "center" }}>
+                    <audio
+                      src={post.media}
+                      controls
+                      style={{ width: "100%", maxWidth: "450px" }}
+                    />
                   </Box>
-                </Box>
-              )}
-            </Box>
-          )}
-        </Box>
+                )}
+                {post.mediaType === "document" && (
+                  <Box sx={{ display: "flex", alignItems: "center", justifyContent: "center", p: 3, width: "100%" }}>
+                    <Box display="flex" alignItems="center" gap={1.5}>
+                      {getDocumentIcon(getFileName(post))}
+                      <Typography
+                        color="text.primary"
+                        sx={{ fontSize: { xs: "0.875rem", sm: "1rem" }, wordBreak: "break-word", textAlign: "center" }}
+                      >
+                        {getFileName(post)}
+                      </Typography>
+                    </Box>
+                  </Box>
+                )}
+              </Box>
+            )}
+          </Box>
 
-        <Box sx={{ mt: "auto", width: "100%", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-          <Box display="flex" alignItems="center" gap={2}>
-            <Typography variant="caption" color="text.secondary">
-              {post.likes.length} Likes
-            </Typography>
-            <Typography variant="caption" color="text.secondary">
-              {post.comments.length} Comments
-            </Typography>
-            <Typography variant="caption" color="text.secondary">
-              {post.shares.length} Shares
-            </Typography>
+          <Box sx={{ mt: 3, width: "100%", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <Box display="flex" alignItems="center" gap={{ xs: 1.5, sm: 3 }}>
+              <Tooltip title={`${likes.length} Likes`} arrow>
+                <Box display="flex" alignItems="center" gap={0.5}>
+                  <FavoriteIcon sx={{ fontSize: { xs: 18, sm: 20 }, color: "text.secondary" }} />
+                  <Typography variant="caption" color="text.secondary" sx={{ fontSize: { xs: "0.75rem", sm: "0.875rem" } }}>
+                    {likes.length}
+                  </Typography>
+                </Box>
+              </Tooltip>
+              <Tooltip title={`${comments.length} Comments`} arrow>
+                <Box display="flex" alignItems="center" gap={0.5}>
+                  <CommentIcon sx={{ fontSize: { xs: 18, sm: 20 }, color: "text.secondary" }} />
+                  <Typography variant="caption" color="text.secondary" sx={{ fontSize: { xs: "0.75rem", sm: "0.875rem" } }}>
+                    {comments.length}
+                  </Typography>
+                </Box>
+              </Tooltip>
+              <Tooltip title={`${shares.length} Shares`} arrow>
+                <Box display="flex" alignItems="center" gap={0.5}>
+                  <ShareIcon sx={{ fontSize: { xs: 18, sm: 20 }, color: "text.secondary" }} />
+                  <Typography variant="caption" color="text.secondary" sx={{ fontSize: { xs: "0.75rem", sm: "0.875rem" } }}>
+                    {shares.length}
+                  </Typography>
+                </Box>
+              </Tooltip>
+              <Tooltip title={`${bookmarks.length} Bookmarks`} arrow>
+                <Box display="flex" alignItems="center" gap={0.5}>
+                  <BookmarkIcon sx={{ fontSize: { xs: 18, sm: 20 }, color: "text.secondary" }} />
+                  <Typography variant="caption" color="text.secondary" sx={{ fontSize: { xs: "0.75rem", sm: "0.875rem" } }}>
+                    {bookmarks.length}
+                  </Typography>
+                </Box>
+              </Tooltip>
+            </Box>
           </Box>
         </Box>
-      </Box>
+      </motion.div>
     );
   };
 
   return (
     <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.5 }}>
       {isLoading ? (
-        <Box
-          sx={{
-            width: { xs: "100%", sm: "90%", md: "600px" },
-            maxWidth: "600px",
-            mx: { xs: 0, sm: "auto" },
-            p: 2,
-            background: "rgba(255, 255, 255, 0.2)",
-            borderRadius: 2,
-            backdropFilter: "blur(10px)",
-          }}
-        >
-          <Skeleton variant="rectangular" width="100%" height={200} />
+        <Box sx={{ display: "flex", flexDirection: "column", alignItems: "center", px: { xs: 2, sm: 3 }, py: 3, gap: 4 }}>
+          {[...Array(3)].map((_, index) => (
+            <Box
+              key={index}
+              sx={{
+                width: { xs: "100%", sm: "90%", md: "600px" },
+                maxWidth: "600px",
+                p: { xs: 2, sm: 3 },
+                background: "rgba(255, 255, 255, 0.2)",
+                borderRadius: "20px",
+                backdropFilter: "blur(12px)",
+              }}
+            >
+              <Box display="flex" gap={2}>
+                <Skeleton variant="circular" width={48} height={48} />
+                <Box flex={1}>
+                  <Skeleton variant="text" width="40%" />
+                  <Skeleton variant="text" width="60%" />
+                </Box>
+              </Box>
+              <Skeleton variant="rectangular" height={200} sx={{ mt: 2, borderRadius: "12px" }} />
+              <Box display="flex" justifyContent="space-between" mt={2}>
+                <Skeleton variant="text" width="20%" />
+                <Skeleton variant="text" width="20%" />
+                <Skeleton variant="text" width="20%" />
+                <Skeleton variant="text" width="20%" />
+              </Box>
+            </Box>
+          ))}
         </Box>
       ) : currentUser?.isAdmin ? (
-        <Box sx={{ display: "flex", flexDirection: "column", alignItems: "center", px: 2, py: 2 }}>
+        <Box sx={{ display: "flex", flexDirection: "column", alignItems: "center", px: { xs: 2, sm: 3 }, py: 3, gap: 4 }}>
           {posts.posts.length > 0 ? (
             posts.posts.map((adminPost) => {
               const postUser = allPostsUsers[adminPost.postedBy] || {
@@ -400,12 +518,59 @@ const AdminPostCards = () => {
               return renderPost(adminPost, postUser);
             })
           ) : (
-            <Typography color="text.secondary">No posts available</Typography>
+            <Typography
+              color="text.secondary"
+              sx={{ fontSize: { xs: "1rem", sm: "1.25rem" }, fontWeight: 500 }}
+            >
+              No posts available
+            </Typography>
           )}
         </Box>
       ) : (
-        <Typography color="text.secondary">You are not authorized to view this page.</Typography>
+        <Typography
+          color="text.secondary"
+          sx={{ fontSize: { xs: "1rem", sm: "1.25rem" }, fontWeight: 500, textAlign: "center", py: 4 }}
+        >
+          You are not authorized to view this page.
+        </Typography>
       )}
+
+      <Dialog
+        open={dialogOpen}
+        onClose={handleDialogClose}
+        PaperProps={{
+          sx: {
+            background: "rgba(255, 255, 255, 0.95)",
+            backdropFilter: "blur(8px)",
+            borderRadius: 2,
+            boxShadow: "0 4px 20px rgba(0, 0, 0, 0.1)",
+          },
+        }}
+      >
+        <DialogTitle sx={{ fontSize: { xs: "1rem", sm: "1.25rem" } }}>
+          {dialogAction === "ban" ? "Ban Post" : "Unban Post"}
+        </DialogTitle>
+        <DialogContent>
+          <Typography sx={{ fontSize: { xs: "0.875rem", sm: "1rem" } }}>
+            Are you sure you want to {dialogAction === "ban" ? "ban" : "unban"} this post?
+            {dialogAction === "ban" ? " It will be hidden from users." : " It will be visible to users again."}
+          </Typography>
+        </DialogContent>
+        <DialogActions>
+          <Button
+            onClick={handleDialogClose}
+            sx={{ color: "text.secondary", fontSize: { xs: "0.875rem", sm: "1rem" } }}
+          >
+            Cancel
+          </Button>
+          <Button
+            onClick={handleDialogConfirm}
+            sx={{ color: "primary.main", fontSize: { xs: "0.875rem", sm: "1rem" } }}
+          >
+            Confirm
+          </Button>
+        </DialogActions>
+      </Dialog>
     </motion.div>
   );
 };
