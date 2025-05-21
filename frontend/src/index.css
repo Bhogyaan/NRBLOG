@@ -1,0 +1,72 @@
+.icon-container {
+	border-radius: 50%;
+	padding: 8px;
+	width: 40px;
+	height: 40px;
+	transition: background-color 0.3s ease-in-out;
+}
+
+.icon-container:hover {
+	background-color: #1e1e1e;
+}
+
+::-webkit-scrollbar {
+	width: 7px;
+}
+
+::-webkit-scrollbar-track {
+	background-color: #1e1e1e;
+}
+
+::-webkit-scrollbar-thumb {
+	background-color: #888;
+}
+
+::-webkit-scrollbar-thumb:hover {
+	background-color: #555;
+}
+
+/* Bottom Navigation Styles */
+.bottom-nav {
+	position: fixed;
+	bottom: 0;
+	left: 0;
+	width: 100%;
+	z-index: 1000;
+}
+
+/* Comment Modal Animation */
+@keyframes slideInBottom {
+	from {
+		transform: translateY(100%);
+	}
+	to {
+		transform: translateY(0);
+	}
+}
+
+@keyframes slideOutBottom {
+	from {
+		transform: translateY(0);
+	}
+	to {
+		transform: translateY(100%);
+	}
+}
+
+.chakra-modal__content {
+	&.slide-in-bottom-enter {
+		animation: slideInBottom 0.3s ease-out forwards;
+	}
+	&.slide-in-bottom-exit {
+		animation: slideOutBottom 0.3s ease-in forwards;
+	}
+}
+
+/* Responsive Adjustments */
+@media (max-width: 768px) {
+	.chakra-container {
+		padding-bottom: 60px; /* Space for bottom navigation */
+	}
+}
+
