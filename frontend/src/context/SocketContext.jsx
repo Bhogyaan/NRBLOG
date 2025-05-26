@@ -3,6 +3,7 @@ import { useRecoilValue } from "recoil";
 import io from "socket.io-client";
 import userAtom from "../atoms/userAtom";
 import { motion } from "framer-motion";
+import useShowToast from "../hooks/useShowToast";
 
 export const SocketContext = createContext();
 
@@ -16,18 +17,25 @@ export const SocketContextProvider = ({ children }) => {
   const [connectionStatus, setConnectionStatus] = useState("disconnected");
   const [reconnectAttempts, setReconnectAttempts] = useState(0);
   const user = useRecoilValue(userAtom);
+  const showToast = useShowToast();
   const serverUrl = import.meta.env.VITE_SERVER_URL || "http://localhost:5000";
 
   useEffect(() => {
+    if (!serverUrl) {
+      showToast("Error", "Server URL not configured", "error");
+      setConnectionStatus("disconnected");
+      return;
+    }
+
     if (!user?._id || user._id === "undefined") {
-      console.warn("No valid user ID, skipping socket connection");
+      showToast("Warning", "No valid user ID, real-time updates disabled", "warning");
       setConnectionStatus("disconnected");
       return;
     }
 
     const token = localStorage.getItem("token");
     if (!token) {
-      console.warn("No auth token, skipping socket connection");
+      showToast("Warning", "No auth token, real-time updates disabled", "warning");
       setConnectionStatus("disconnected");
       return;
     }
@@ -40,7 +48,6 @@ export const SocketContextProvider = ({ children }) => {
       reconnectionDelay: 500,
       reconnectionDelayMax: 5000,
       randomizationFactor: 0.3,
-      withCredentials: true,
       timeout: 10000,
     });
 
@@ -48,7 +55,6 @@ export const SocketContextProvider = ({ children }) => {
     setConnectionStatus("connecting");
 
     socketInstance.on("connect", () => {
-      console.log("Socket connected:", socketInstance.id);
       setConnectionStatus("connected");
       setReconnectAttempts(0);
     });
@@ -58,49 +64,37 @@ export const SocketContextProvider = ({ children }) => {
     });
 
     socketInstance.on("connect_error", (error) => {
-      console.error("Socket connection error:", error.message);
+      showToast("Error", `Socket connection failed: ${error.message}`, "error");
       setConnectionStatus("error");
     });
 
     socketInstance.on("reconnect", (attempt) => {
-      console.log(`Reconnected to server after ${attempt} attempts`);
+      showToast("Success", `Reconnected to server after ${attempt} attempts`, "success");
       setConnectionStatus("connected");
       setReconnectAttempts(0);
     });
 
     socketInstance.on("reconnect_attempt", (attempt) => {
-      console.log(`Reconnection attempt ${attempt}`);
       setConnectionStatus("reconnecting");
       setReconnectAttempts(attempt);
     });
 
     socketInstance.on("reconnect_failed", () => {
-      console.error("Failed to reconnect to socket server");
+      showToast("Error", "Failed to reconnect to server", "error");
       setConnectionStatus("failed");
     });
 
     socketInstance.on("disconnect", (reason) => {
-      console.warn("Socket disconnected:", reason);
+      showToast("Warning", `Socket disconnected: ${reason}`, "warning");
       setConnectionStatus("disconnected");
     });
 
     socketInstance.on("error", (error) => {
-      console.error("Socket server error:", error.message);
+      showToast("Error", `Socket error: ${error.message}`, "error");
       setConnectionStatus("error");
     });
 
-    const pingInterval = setInterval(() => {
-      if (socketInstance.connected) {
-        socketInstance.emit("ping");
-      }
-    }, 30000);
-
-    socketInstance.on("pong", () => {
-      console.log("Received pong from server");
-    });
-
     return () => {
-      clearInterval(pingInterval);
       socketInstance.off("connect");
       socketInstance.off("getOnlineUsers");
       socketInstance.off("connect_error");
@@ -108,13 +102,10 @@ export const SocketContextProvider = ({ children }) => {
       socketInstance.off("reconnect_attempt");
       socketInstance.off("reconnect_failed");
       socketInstance.off("disconnect");
-      socketInstance.off("pong");
       socketInstance.off("error");
       socketInstance.disconnect();
-      setSocket(null);
-      setConnectionStatus("disconnected");
     };
-  }, [user?._id, serverUrl]);
+  }, [user?._id, serverUrl, showToast]);
 
   return (
     <SocketContext.Provider value={{ socket, onlineUsers, connectionStatus, reconnectAttempts }}>

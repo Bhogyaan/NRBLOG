@@ -1,4 +1,4 @@
-import { Post, Reply } from "../models/postModel.js";
+import { Post } from "../models/postModel.js";
 import Story from "../models/storyModel.js";
 import User from "../models/userModel.js";
 import { v2 as cloudinary } from "cloudinary";
@@ -47,32 +47,6 @@ const deleteFromCloudinary = async (publicId) => {
   } catch (error) {
     console.error("deleteFromCloudinary: Failed", { publicId, message: error.message });
   }
-};
-
-// Recursive function to populate nested replies
-const populateReplies = async (query) => {
-  return query.populate({
-    path: "comments.replies",
-    populate: [
-      { path: "userId", select: "username profilePic" },
-      {
-        path: "replies",
-        populate: [
-          { path: "userId", select: "username profilePic" },
-          {
-            path: "replies",
-            populate: [
-              { path: "userId", select: "username profilePic" },
-              {
-                path: "replies",
-                populate: { path: "userId", select: "username profilePic" },
-              },
-            ],
-          },
-        ],
-      },
-    ],
-  });
 };
 
 const createPost = async (req, res) => {
@@ -185,7 +159,7 @@ const createPost = async (req, res) => {
     }
 
     const query = Post.findById(newPost._id).populate("postedBy", "username profilePic");
-    const populatedPost = await populateReplies(query);
+    const populatedPost = await query.exec();
 
     if (req.io) {
       const followerIds = [...(user.following || []), user._id.toString()];
@@ -315,11 +289,6 @@ const deletePost = async (req, res) => {
       await deleteFromCloudinary(previewPublicId);
     }
 
-    const replyIds = post.comments.reduce((acc, comment) => [...acc, ...comment.replies], []);
-    if (replyIds.length > 0) {
-      await Reply.deleteMany({ _id: { $in: replyIds } });
-    }
-
     await Post.findByIdAndDelete(req.params.id);
     if (req.io) {
       req.io.to(`post:${req.params.id}`).emit("postDeleted", { postId: req.params.id, userId: post.postedBy });
@@ -377,7 +346,7 @@ const editPost = async (req, res) => {
     await post.save();
 
     const query = Post.findById(postId).populate("postedBy", "username profilePic");
-    const updatedPost = await populateReplies(query);
+    const updatedPost = await query.exec();
 
     if (req.io) {
       req.io.to(`post:${postId}`).emit("postUpdated", updatedPost);
@@ -401,7 +370,7 @@ const getPost = async (req, res) => {
     const query = Post.findById(req.params.id)
       .populate("postedBy", "username profilePic")
       .populate("comments.userId", "username profilePic");
-    const post = await populateReplies(query);
+    const post = await query.exec();
     if (!post || post.isBanned) {
       console.error("getPost: Post not found or banned", { postId: req.params.id });
       return res.status(404).json({ error: "Post not found or banned" });
@@ -434,14 +403,14 @@ const likeUnlikePost = async (req, res) => {
     if (userLikedPost) {
       post.likes.pull(userId);
     } else {
-      post.likes = [...new Set([...post.likes, userId])]; // Prevent duplicates
+      post.likes = [...new Set([...post.likes, userId])];
     }
     await post.save();
 
     const query = Post.findById(postId)
       .populate("postedBy", "username profilePic")
       .populate("comments.userId", "username profilePic");
-    const populatedPost = await populateReplies(query);
+    const populatedPost = await query.exec();
 
     if (req.io) {
       req.io.to(`post:${postId}`).emit("likeUnlikePost", {
@@ -449,6 +418,8 @@ const likeUnlikePost = async (req, res) => {
         userId,
         likes: populatedPost.likes,
         post: populatedPost,
+        reactionType: "thumbs-up",
+        timestamp: Date.now(),
       });
     } else {
       console.warn("likeUnlikePost: Socket.IO instance unavailable");
@@ -492,7 +463,7 @@ const bookmarkUnbookmarkPost = async (req, res) => {
     const query = Post.findById(postId)
       .populate("postedBy", "username profilePic")
       .populate("comments.userId", "username profilePic");
-    const populatedPost = await populateReplies(query);
+    const populatedPost = await query.exec();
 
     if (req.io) {
       req.io.to(`post:${postId}`).emit("bookmarkUnbookmarkPost", {
@@ -529,7 +500,11 @@ const getBookmarks = async (req, res) => {
       .populate({
         path: "bookmarks",
         match: { isBanned: false },
-        populate: { path: "postedBy", select: "username profilePic" },
+        populate: {
+          path: "postedBy",
+          select: "username profilePic",
+          match: { _id: { $exists: true } },
+        },
       })
       .lean();
 
@@ -538,7 +513,8 @@ const getBookmarks = async (req, res) => {
       return res.status(404).json({ error: "User not found" });
     }
 
-    res.status(200).json(user.bookmarks || []);
+    const validBookmarks = user.bookmarks.filter((post) => post.postedBy);
+    res.status(200).json(validBookmarks || []);
   } catch (err) {
     console.error("getBookmarks: Error", { message: err.message, stack: err.stack, username: req.params.username });
     res.status(500).json({ error: `Failed to fetch bookmarks: ${err.message}` });
@@ -580,7 +556,6 @@ const commentOnPost = async (req, res) => {
       userProfilePic: user.profilePic,
       createdAt: new Date(),
       likes: [],
-      replies: [],
       isEdited: false,
     };
 
@@ -590,7 +565,7 @@ const commentOnPost = async (req, res) => {
     const query = Post.findById(postId)
       .populate("postedBy", "username profilePic")
       .populate("comments.userId", "username profilePic");
-    const populatedPost = await populateReplies(query);
+    const populatedPost = await query.exec();
 
     const newComment = populatedPost.comments[populatedPost.comments.length - 1];
 
@@ -599,6 +574,7 @@ const commentOnPost = async (req, res) => {
         postId,
         comment: newComment,
         post: populatedPost,
+        timestamp: Date.now(),
       });
     } else {
       console.warn("commentOnPost: Socket.IO instance unavailable");
@@ -608,133 +584,6 @@ const commentOnPost = async (req, res) => {
   } catch (err) {
     console.error("commentOnPost: Error", { message: err.message, stack: err.stack, postId: req.params.postId });
     res.status(500).json({ error: `Failed to add comment: ${err.message}` });
-  }
-};
-
-const addReply = async (req, res) => {
-  try {
-    if (!req.user) {
-      console.error("addReply: Missing req.user");
-      return res.status(401).json({ error: "Authentication required" });
-    }
-
-    const { postId, commentId } = req.params;
-    const { text, parentId } = req.body;
-    const userId = req.user._id;
-
-    if (!text) {
-      console.error("addReply: Missing text", { postId, commentId, parentId });
-      return res.status(400).json({ error: "Reply text is required" });
-    }
-
-    const post = await Post.findById(postId);
-    if (!post || post.isBanned) {
-      console.error("addReply: Post not found or banned", { postId });
-      return res.status(404).json({ error: "Post not found or banned" });
-    }
-
-    const user = await User.findById(userId).select("username profilePic");
-    if (!user) {
-      console.error("addReply: User not found", { userId });
-      return res.status(404).json({ error: "User not found" });
-    }
-
-    let newReply;
-    let parentCommentId = commentId;
-
-    if (!parentId) {
-      // Reply to a comment
-      const comment = post.comments.id(commentId);
-      if (!comment) {
-        console.error("addReply: Comment not found", { commentId });
-        return res.status(404).json({ error: "Comment not found" });
-      }
-
-      newReply = new Reply({
-        userId,
-        text: sanitizeHtml(text, { allowedTags: [], allowedAttributes: {} }),
-        username: user.username,
-        userProfilePic: user.profilePic,
-        parentId: commentId,
-        parentType: "Comment",
-        depth: 1,
-        topLevelCommentId: commentId,
-        createdAt: new Date(),
-        likes: [],
-        replies: [],
-        isEdited: false,
-      });
-      await newReply.save();
-
-      comment.replies.push(newReply._id);
-    } else {
-      // Reply to another reply
-      const parentReply = await Reply.findById(parentId);
-      if (!parentReply) {
-        console.error("addReply: Parent reply not found", { parentId });
-        return res.status(404).json({ error: "Parent reply not found" });
-      }
-
-      newReply = new Reply({
-        userId,
-        text: sanitizeHtml(text, { allowedTags: [], allowedAttributes: {} }),
-        username: user.username,
-        userProfilePic: user.profilePic,
-        parentId,
-        parentType: "Reply",
-        depth: parentReply.depth + 1,
-        topLevelCommentId: parentReply.topLevelCommentId || commentId,
-        createdAt: new Date(),
-        likes: [],
-        replies: [],
-        isEdited: false,
-      });
-      await newReply.save();
-
-      parentReply.replies.push(newReply._id);
-      await parentReply.save();
-
-      parentCommentId = parentReply.topLevelCommentId;
-    }
-
-    await post.save();
-
-    const populatedReply = await Reply.findById(newReply._id)
-      .populate("userId", "username profilePic")
-      .populate({
-        path: "replies",
-        populate: [
-          { path: "userId", select: "username profilePic" },
-          { path: "replies", populate: { path: "userId", select: "username profilePic" } },
-        ],
-      });
-
-    const query = Post.findById(postId)
-      .populate("postedBy", "username profilePic")
-      .populate("comments.userId", "username profilePic");
-    const populatedPost = await populateReplies(query);
-
-    if (req.io) {
-      req.io.to(`post:${postId}`).emit("newReply", {
-        postId,
-        commentId: parentCommentId,
-        reply: populatedReply,
-        post: populatedPost,
-      });
-    } else {
-      console.warn("addReply: Socket.IO instance unavailable");
-    }
-
-    res.status(201).json({ reply: populatedReply, post: populatedPost });
-  } catch (err) {
-    console.error("addReply: Error", {
-      message: err.message,
-      stack: err.stack,
-      postId: req.params.postId,
-      commentId: req.params.commentId,
-      parentId: req.body.parentId,
-    });
-    res.status(500).json({ error: `Failed to add reply: ${err.message}` });
   }
 };
 
@@ -779,7 +628,7 @@ const editComment = async (req, res) => {
     const query = Post.findById(postId)
       .populate("postedBy", "username profilePic")
       .populate("comments.userId", "username profilePic");
-    const populatedPost = await populateReplies(query);
+    const populatedPost = await query.exec();
 
     if (req.io) {
       req.io.to(`post:${postId}`).emit("editComment", {
@@ -787,6 +636,7 @@ const editComment = async (req, res) => {
         commentId,
         comment,
         post: populatedPost,
+        timestamp: Date.now(),
       });
     } else {
       console.warn("editComment: Socket.IO instance unavailable");
@@ -796,62 +646,6 @@ const editComment = async (req, res) => {
   } catch (err) {
     console.error("editComment: Error", { message: err.message, stack: err.stack, postId: req.params.postId, commentId: req.params.commentId });
     res.status(500).json({ error: `Failed to edit comment: ${err.message}` });
-  }
-};
-
-const editReply = async (req, res) => {
-  try {
-    if (!req.user) {
-      console.error("editReply: Missing req.user");
-      return res.status(401).json({ error: "Authentication required" });
-    }
-
-    const { postId, commentId, replyId } = req.params;
-    const { text } = req.body;
-    const userId = req.user._id;
-
-    const reply = await Reply.findById(replyId);
-    if (!reply) {
-      console.error("editReply: Reply not found", { replyId });
-      return res.status(404).json({ error: "Reply not found" });
-    }
-
-    if (reply.userId.toString() !== userId.toString() && !req.user.isAdmin) {
-      console.error("editReply: Unauthorized", { userId, replyUserId: reply.userId });
-      return res.status(403).json({ error: "Unauthorized to edit this reply" });
-    }
-
-    if (!text || !text.trim()) {
-      console.error("editReply: Empty text", { replyId });
-      return res.status(400).json({ error: "Reply text cannot be empty" });
-    }
-
-    reply.text = sanitizeHtml(text, { allowedTags: [], allowedAttributes: {} });
-    reply.isEdited = true;
-    reply.updatedAt = new Date();
-    await reply.save();
-
-    const query = Post.findById(postId)
-      .populate("postedBy", "username profilePic")
-      .populate("comments.userId", "username profilePic");
-    const populatedPost = await populateReplies(query);
-
-    if (req.io) {
-      req.io.to(`post:${postId}`).emit("editReply", {
-        postId,
-        commentId: reply.topLevelCommentId || commentId,
-        replyId,
-        reply,
-        post: populatedPost,
-      });
-    } else {
-      console.warn("editReply: Socket.IO instance unavailable");
-    }
-
-    res.status(200).json({ reply, post: populatedPost });
-  } catch (err) {
-    console.error("editReply: Error", { message: err.message, stack: err.stack, postId: req.params.postId, replyId: req.params.replyId });
-    res.status(500).json({ error: `Failed to edit reply: ${err.message}` });
   }
 };
 
@@ -882,29 +676,20 @@ const deleteComment = async (req, res) => {
       return res.status(403).json({ error: "Unauthorized to delete this comment" });
     }
 
-    const deleteNestedReplies = async (replyIds) => {
-      if (!replyIds || replyIds.length === 0) return;
-      const replies = await Reply.find({ _id: { $in: replyIds } });
-      for (const reply of replies) {
-        await deleteNestedReplies(reply.replies);
-      }
-      await Reply.deleteMany({ _id: { $in: replyIds } });
-    };
-
-    await deleteNestedReplies(comment.replies);
     post.comments.pull({ _id: commentId });
     await post.save();
 
     const query = Post.findById(postId)
       .populate("postedBy", "username profilePic")
       .populate("comments.userId", "username profilePic");
-    const populatedPost = await populateReplies(query);
+    const populatedPost = await query.exec();
 
     if (req.io) {
       req.io.to(`post:${postId}`).emit("deleteComment", {
         postId,
         commentId,
         post: populatedPost,
+        timestamp: Date.now(),
       });
     } else {
       console.warn("deleteComment: Socket.IO instance unavailable");
@@ -914,93 +699,6 @@ const deleteComment = async (req, res) => {
   } catch (err) {
     console.error("deleteComment: Error", { message: err.message, stack: err.stack, postId: req.params.postId, commentId: req.params.commentId });
     res.status(500).json({ error: `Failed to delete comment: ${err.message}` });
-  }
-};
-
-const deleteReply = async (req, res) => {
-  try {
-    if (!req.user) {
-      console.error("deleteReply: Missing req.user");
-      return res.status(401).json({ error: "Authentication required" });
-    }
-
-    const { postId, commentId, replyId } = req.params;
-    const userId = req.user._id;
-
-    const post = await Post.findById(postId);
-    if (!post || post.isBanned) {
-      console.error("deleteReply: Post not found or banned", { postId });
-      return res.status(404).json({ error: "Post not found or banned" });
-    }
-
-    const reply = await Reply.findById(replyId);
-    if (!reply) {
-      console.error("deleteReply: Reply not found", { replyId });
-      return res.status(404).json({ error: "Reply not found" });
-    }
-
-    if (reply.userId.toString() !== userId.toString() && userId.toString() !== post.postedBy.toString() && !req.user.isAdmin) {
-      console.error("deleteReply: Unauthorized", { userId, replyUserId: reply.userId, postOwnerId: post.postedBy });
-      return res.status(403).json({ error: "Unauthorized to delete this reply" });
-    }
-
-    const deleteNestedReplies = async (replyIds) => {
-      if (!replyIds || replyIds.length === 0) return;
-      const replies = await Reply.find({ _id: { $in: replyIds } });
-      for (const reply of replies) {
-        await deleteNestedReplies(reply.replies);
-      }
-      await Reply.deleteMany({ _id: { $in: replyIds } });
-    };
-
-    await deleteNestedReplies(reply.replies);
-
-    if (reply.parentType === "Comment") {
-      const comment = post.comments.id(commentId);
-      if (!comment) {
-        console.error("deleteReply: Comment not found", { commentId });
-        return res.status(404).json({ error: "Comment not found" });
-      }
-      comment.replies.pull(replyId);
-    } else {
-      const parentReply = await Reply.findById(reply.parentId);
-      if (!parentReply) {
-        console.error("deleteReply: Parent reply not found", { parentId: reply.parentId });
-        return res.status(404).json({ error: "Parent reply not found" });
-      }
-      parentReply.replies.pull(replyId);
-      await parentReply.save();
-    }
-
-    await Reply.findByIdAndDelete(replyId);
-    await post.save();
-
-    const query = Post.findById(postId)
-      .populate("postedBy", "username profilePic")
-      .populate("comments.userId", "username profilePic");
-    const populatedPost = await populateReplies(query);
-
-    if (req.io) {
-      req.io.to(`post:${postId}`).emit("deleteReply", {
-        postId,
-        commentId: reply.topLevelCommentId || commentId,
-        replyId,
-        post: populatedPost,
-      });
-    } else {
-      console.warn("deleteReply: Socket.IO instance unavailable");
-    }
-
-    res.status(200).json({ message: "Reply deleted successfully", post: populatedPost });
-  } catch (err) {
-    console.error("deleteReply: Error", {
-      message: err.message,
-      stack: err.stack,
-      postId: req.params.postId,
-      commentId: req.params.commentId,
-      replyId: req.params.replyId,
-    });
-    res.status(500).json({ error: `Failed to delete reply: ${err.message}` });
   }
 };
 
@@ -1031,14 +729,14 @@ const likeUnlikeComment = async (req, res) => {
     if (userLikedComment) {
       comment.likes.pull(userId);
     } else {
-      comment.likes = [...new Set([...comment.likes, userId])]; // Prevent duplicates
+      comment.likes = [...new Set([...comment.likes, userId])];
     }
     await post.save();
 
     const query = Post.findById(postId)
       .populate("postedBy", "username profilePic")
       .populate("comments.userId", "username profilePic");
-    const populatedPost = await populateReplies(query);
+    const populatedPost = await query.exec();
 
     if (req.io) {
       req.io.to(`post:${postId}`).emit("likeUnlikeComment", {
@@ -1047,6 +745,7 @@ const likeUnlikeComment = async (req, res) => {
         userId,
         likes: comment.likes,
         post: populatedPost,
+        timestamp: Date.now(),
       });
     } else {
       console.warn("likeUnlikeComment: Socket.IO instance unavailable");
@@ -1056,62 +755,6 @@ const likeUnlikeComment = async (req, res) => {
   } catch (err) {
     console.error("likeUnlikeComment: Error", { message: err.message, stack: err.stack, postId: req.params.postId, commentId: req.params.commentId });
     res.status(500).json({ error: `Failed to like/unlike comment: ${err.message}` });
-  }
-};
-
-const likeUnlikeReply = async (req, res) => {
-  try {
-    if (!req.user) {
-      console.error("likeUnlikeReply: Missing req.user");
-      return res.status(401).json({ error: "Authentication required" });
-    }
-
-    const { postId, commentId, replyId } = req.params;
-    const userId = req.user._id;
-
-    const reply = await Reply.findById(replyId);
-    if (!reply) {
-      console.error("likeUnlikeReply: Reply not found", { replyId });
-      return res.status(404).json({ error: "Reply not found" });
-    }
-
-    const post = await Post.findById(postId);
-    if (!post || post.isBanned) {
-      console.error("likeUnlikeReply: Post not found or banned", { postId });
-      return res.status(404).json({ error: "Post not found or banned" });
-    }
-
-    const userLikedReply = reply.likes.includes(userId);
-
-    if (userLikedReply) {
-      reply.likes.pull(userId);
-    } else {
-      reply.likes = [...new Set([...reply.likes, userId])]; // Prevent duplicates
-    }
-    await reply.save();
-
-    const query = Post.findById(postId)
-      .populate("postedBy", "username profilePic")
-      .populate("comments.userId", "username profilePic");
-    const populatedPost = await populateReplies(query);
-
-    if (req.io) {
-      req.io.to(`post:${postId}`).emit("likeUnlikeReply", {
-        postId,
-        commentId: reply.topLevelCommentId || commentId,
-        replyId,
-        userId,
-        likes: reply.likes,
-        post: populatedPost,
-      });
-    } else {
-      console.warn("likeUnlikeReply: Socket.IO instance unavailable");
-    }
-
-    res.status(200).json({ likes: reply.likes, post: populatedPost });
-  } catch (err) {
-    console.error("likeUnlikeReply: Error", { message: err.message, stack: err.stack, postId: req.params.postId, replyId: req.params.replyId });
-    res.status(500).json({ error: `Failed to like/unlike reply: ${err.message}` });
   }
 };
 
@@ -1140,9 +783,22 @@ const banPost = async (req, res) => {
     await post.save();
 
     const query = Post.findById(id)
-      .populate("postedBy", "username profilePic")
-      .populate("comments.userId", "username profilePic");
-    const populatedPost = await populateReplies(query);
+      .populate({
+        path: "postedBy",
+        select: "username profilePic",
+        match: { _id: { $exists: true } },
+      })
+      .populate({
+        path: "comments.userId",
+        select: "username profilePic",
+        match: { _id: { $exists: true } },
+      });
+    const populatedPost = await query.exec();
+
+    if (!populatedPost.postedBy) {
+      console.warn("banPost: Post has invalid postedBy", { postId: id });
+      return res.status(200).json({ message: "Post banned successfully, but postedBy is invalid", post: populatedPost });
+    }
 
     if (req.io) {
       req.io.to(`post:${id}`).emit("postBanned", { postId: id, post: populatedPost });
@@ -1181,9 +837,22 @@ const unbanPost = async (req, res) => {
     await post.save();
 
     const query = Post.findById(id)
-      .populate("postedBy", "username profilePic")
-      .populate("comments.userId", "username profilePic");
-    const populatedPost = await populateReplies(query);
+      .populate({
+        path: "postedBy",
+        select: "username profilePic",
+        match: { _id: { $exists: true } },
+      })
+      .populate({
+        path: "comments.userId",
+        select: "username profilePic",
+        match: { _id: { $exists: true } },
+      });
+    const populatedPost = await query.exec();
+
+    if (!populatedPost.postedBy) {
+      console.warn("unbanPost: Post has invalid postedBy", { postId: id });
+      return res.status(200).json({ message: "Post unbanned successfully, but postedBy is invalid", post: populatedPost });
+    }
 
     if (req.io) {
       req.io.to(`post:${id}`).emit("postUnbanned", { postId: id, post: populatedPost });
@@ -1217,11 +886,20 @@ const getFeedPosts = async (req, res) => {
       isBanned: false,
     })
       .sort({ createdAt: -1 })
-      .populate("postedBy", "username profilePic")
-      .populate("comments.userId", "username profilePic");
-    const feedPosts = await populateReplies(query);
+      .populate({
+        path: "postedBy",
+        select: "username profilePic",
+        match: { _id: { $exists: true } },
+      })
+      .populate({
+        path: "comments.userId",
+        select: "username profilePic",
+        match: { _id: { $exists: true } },
+      });
+    const feedPosts = await query.exec();
 
-    res.status(200).json(feedPosts);
+    const validPosts = feedPosts.filter((post) => post.postedBy);
+    res.status(200).json(validPosts);
   } catch (err) {
     console.error("getFeedPosts: Error", { message: err.message, stack: err.stack, userId: req.user?._id });
     res.status(500).json({ error: `Failed to fetch feed posts: ${err.message}` });
@@ -1244,11 +922,20 @@ const getUserPosts = async (req, res) => {
 
     const query = Post.find({ postedBy: user._id, isBanned: false })
       .sort({ createdAt: -1 })
-      .populate("postedBy", "username profilePic")
-      .populate("comments.userId", "username profilePic");
-    const posts = await populateReplies(query);
+      .populate({
+        path: "postedBy",
+        select: "username profilePic",
+        match: { _id: { $exists: true } },
+      })
+      .populate({
+        path: "comments.userId",
+        select: "username profilePic",
+        match: { _id: { $exists: true } },
+      });
+    const userPosts = await query.exec();
 
-    res.status(200).json(posts);
+    const validPosts = userPosts.filter((post) => post.postedBy);
+    res.status(200).json(validPosts);
   } catch (err) {
     console.error("getUserPosts: Error", { message: err.message, stack: err.stack, username: req.params.username });
     res.status(500).json({ error: `Failed to fetch user posts: ${err.message}` });
@@ -1269,14 +956,74 @@ const getAllPosts = async (req, res) => {
 
     const query = Post.find({})
       .sort({ createdAt: -1 })
-      .populate("postedBy", "username profilePic name isAdmin")
-      .populate("comments.userId", "username profilePic");
-    const posts = await populateReplies(query).lean();
+      .populate({
+        path: "postedBy",
+        select: "username profilePic",
+        match: { _id: { $exists: true } },
+      })
+      .populate({
+        path: "comments.userId",
+        select: "username profilePic",
+        match: { _id: { $exists: true } },
+      });
+    const allPosts = await query.exec();
 
-    res.status(200).json(posts);
+    const validPosts = allPosts.filter((post) => post.postedBy);
+    res.status(200).json(validPosts);
   } catch (err) {
-    console.error("getAllPosts: Error", { message: err.message, stack: err.stack });
+    console.error("getAllPosts: Error", { message: err.message, stack: err.stack, userId: req.user?._id });
     res.status(500).json({ error: `Failed to fetch all posts: ${err.message}` });
+  }
+};
+
+const getPaginatedComments = async (req, res) => {
+  try {
+    if (!req.user) {
+      console.error("getPaginatedComments: Missing req.user");
+      return res.status(401).json({ error: "Authentication required" });
+    }
+
+    const { postId } = req.params;
+    const { page = 1, limit = 10 } = req.query;
+
+    const post = await Post.findById(postId);
+    if (!post || post.isBanned) {
+      console.error("getPaginatedComments: Post not found or banned", { postId });
+      return res.status(404).json({ error: "Post not found or banned" });
+    }
+
+    const skip = (parseInt(page) - 1) * parseInt(limit);
+    const comments = post.comments.slice(skip, skip + parseInt(limit));
+
+    const query = Post.findById(postId)
+      .populate({
+        path: "postedBy",
+        select: "username profilePic",
+        match: { _id: { $exists: true } },
+      })
+      .populate({
+        path: "comments.userId",
+        select: "username profilePic",
+        match: { _id: { $exists: true } },
+      });
+    const populatedPost = await query.exec();
+
+    if (!populatedPost.postedBy) {
+      console.warn("getPaginatedComments: Post has invalid postedBy", { postId });
+      return res.status(200).json({
+        comments: [],
+        totalComments: 0,
+        message: "Comments fetched, but postedBy is invalid",
+      });
+    }
+
+    res.status(200).json({
+      comments: populatedPost.comments.slice(skip, skip + parseInt(limit)),
+      totalComments: populatedPost.comments.length,
+    });
+  } catch (err) {
+    console.error("getPaginatedComments: Error", { message: err.message, stack: err.stack, postId: req.params.postId });
+    res.status(500).json({ error: `Failed to fetch comments: ${err.message}` });
   }
 };
 
@@ -1327,43 +1074,23 @@ const getSuggestedPosts = async (req, res) => {
     })
       .sort({ createdAt: -1 })
       .limit(10)
-      .populate("postedBy", "username profilePic")
-      .populate("comments.userId", "username profilePic");
-    const suggestedPosts = await populateReplies(query);
+      .populate({
+        path: "postedBy",
+        select: "username profilePic",
+        match: { _id: { $exists: true } },
+      })
+      .populate({
+        path: "comments.userId",
+        select: "username profilePic",
+        match: { _id: { $exists: true } },
+      });
+    const suggestedPosts = await query.exec();
 
-    res.status(200).json(suggestedPosts);
+    const validPosts = suggestedPosts.filter((post) => post.postedBy);
+    res.status(200).json(validPosts);
   } catch (err) {
     console.error("getSuggestedPosts: Error", { message: err.message, stack: err.stack, userId: req.user._id });
     res.status(500).json({ error: `Failed to fetch suggested posts: ${err.message}` });
-  }
-};
-
-const getPaginatedComments = async (req, res) => {
-  try {
-    if (!req.user) {
-      console.error("getPaginatedComments: Missing req.user");
-      return res.status(401).json({ error: "Authentication required" });
-    }
-
-    const { postId } = req.params;
-    const { page = 1, limit = 10 } = req.query;
-    const skip = (page - 1) * limit;
-
-    const post = await Post.findById(postId)
-      .populate("postedBy", "username profilePic")
-      .populate("comments.userId", "username profilePic");
-    if (!post || post.isBanned) {
-      console.error("getPaginatedComments: Post not found or banned", { postId });
-      return res.status(404).json({ error: "Post not found or banned" });
-    }
-
-    const populatedPost = await populateReplies(Post.findById(postId));
-    const comments = populatedPost.comments.slice(skip, skip + limit);
-
-    res.status(200).json(comments);
-  } catch (err) {
-    console.error("getPaginatedComments: Error", { message: err.message, stack: err.stack, postId: req.params.postId });
-    res.status(500).json({ error: `Failed to fetch comments: ${err.message}` });
   }
 };
 
@@ -1376,13 +1103,9 @@ export {
   bookmarkUnbookmarkPost,
   getBookmarks,
   commentOnPost,
-  addReply,
   likeUnlikeComment,
-  likeUnlikeReply,
   editComment,
-  editReply,
   deleteComment,
-  deleteReply,
   banPost,
   unbanPost,
   getFeedPosts,

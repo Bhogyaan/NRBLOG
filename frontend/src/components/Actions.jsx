@@ -9,9 +9,11 @@ import {
   IconButton,
   Typography,
 } from "@mui/material";
+import ThumbUpIcon from '@mui/icons-material/ThumbUp';
+import ThumbUpOffAltIcon from '@mui/icons-material/ThumbUpOffAlt';
 import {
-  Favorite as FavoriteIcon,
-  FavoriteBorder as FavoriteBorderIcon,
+  // Favorite as FavoriteIcon,
+  // FavoriteBorder as FavoriteBorderIcon,
   Comment as CommentIcon,
   Bookmark,
   BookmarkBorder,
@@ -159,19 +161,19 @@ const Actions = ({ post, onCommentClick }) => {
         sx={{ my: { xs: 0.5, sm: 1, md: 1.5 } }}
       >
         <IconButton
-          component={motion.button}
-          whileHover={{ scale: 1.1 }}
-          whileTap={{ scale: 0.9 }}
-          onClick={handleLikeAndUnlike}
-          disabled={isLiking}
-          sx={{ color: liked ? "#ED4956" : "text.secondary", p: { xs: 0.5, sm: 1 } }}
-        >
-          {liked ? (
-            <FavoriteIcon sx={{ fontSize: { xs: 20, sm: 24, md: 28 } }} />
-          ) : (
-            <FavoriteBorderIcon sx={{ fontSize: { xs: 20, sm: 24, md: 28 } }} />
-          )}
-        </IconButton>
+  component={motion.button}
+  whileHover={{ scale: 1.1 }}
+  whileTap={{ scale: 0.9 }}
+  onClick={handleLikeAndUnlike}
+  disabled={isLiking}
+  sx={{ color: liked ? "#ED4956" : "text.secondary", p: { xs: 0.5, sm: 1 } }}
+>
+  {liked ? (
+    <ThumbUpIcon sx={{ fontSize: { xs: 20, sm: 24, md: 28 } }} />
+  ) : (
+    <ThumbUpOffAltIcon sx={{ fontSize: { xs: 20, sm: 24, md: 28 } }} />
+  )}
+</IconButton>
         <IconButton
           component={motion.button}
           whileHover={{ scale: 1.1 }}

@@ -18,9 +18,6 @@ import {
   Edit,
   Delete,
   Download,
-  Favorite,
-  FavoriteBorder,
-  Reply,
   Verified as VerifiedIcon,
   Close as CloseIcon,
 } from "@mui/icons-material";
@@ -39,7 +36,7 @@ import {
   BsFilePptFill,
   BsFileTextFill,
 } from "react-icons/bs";
-import CommentItem from "../components/CommentItem";
+import CommentItem from "./CommentItem";
 import { SocketContext } from "../context/SocketContext";
 
 const Post = ({ post, postedBy, isAdminView = false, onBanUnbanPost }) => {
@@ -48,7 +45,6 @@ const Post = ({ post, postedBy, isAdminView = false, onBanUnbanPost }) => {
   const [isLoading, setIsLoading] = useState(false);
   const [anchorEl, setAnchorEl] = useState(null);
   const [newComment, setNewComment] = useState("");
-  const [replyTo, setReplyTo] = useState(null);
   const [commentPage, setCommentPage] = useState(1);
   const [totalComments, setTotalComments] = useState(0);
   const [showComments, setShowComments] = useState(false);
@@ -64,25 +60,31 @@ const Post = ({ post, postedBy, isAdminView = false, onBanUnbanPost }) => {
     try {
       const res = await fetch(`/api/posts/post/${post._id}/comments?page=${page}&limit=10`, {
         headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
-        credentials: "include",
       });
       const data = await res.json();
       if (data.error) {
         showToast("Error", data.error, "error");
         return;
       }
+      const validatedComments = (data.comments || []).map((comment) => ({
+        ...comment,
+        username: comment.username || "Unknown User",
+        userProfilePic: comment.userProfilePic || "/default-image.png",
+        userId: comment.userId || { _id: comment.userId },
+      }));
       setPosts((prev) => ({
         ...prev,
         posts: prev.posts.map((p) =>
           p._id === post._id
             ? {
                 ...p,
-                comments: page === 1 ? data : [...(p.comments || []), ...data],
+                comments: page === 1 ? validatedComments : [...(p.comments || []), ...validatedComments],
+                commentCount: data.totalComments,
               }
             : p
         ),
       }));
-      setTotalComments(data.length);
+      setTotalComments(data.totalComments || 0);
     } catch (error) {
       showToast("Error", error.message, "error");
     }
@@ -95,113 +97,72 @@ const Post = ({ post, postedBy, isAdminView = false, onBanUnbanPost }) => {
   }, [fetchComments, showComments]);
 
   useEffect(() => {
-    if (socket) {
-      const room = `post:${post._id}`;
-      socket.emit("joinPostRoom", room);
-      console.log(`Joined room: ${room}`);
+    if (!socket) {
+      showToast("Warning", "Real-time updates unavailable", "warning");
+      return;
+    }
+    const room = `post:${post._id}`;
+    socket.emit("joinPostRoom", room);
 
-     // Update the handlers object in the socket useEffect
-const handlers = {
-  newComment: ({ postId, comment, post: updatedPost }) => {
-    if (postId === post._id && updatedPost) {
-      setPosts((prev) => ({
-        ...prev,
-        posts: prev.posts.map((p) => 
-          p._id === postId ? { ...p, comments: updatedPost.comments } : p
-        ),
-      }));
-      setTotalComments(updatedPost.comments.length);
-    }
-  },
-  newReply: ({ postId, commentId, reply, post: updatedPost }) => {
-    if (postId === post._id && updatedPost) {
-      setPosts((prev) => ({
-        ...prev,
-        posts: prev.posts.map((p) => 
-          p._id === postId ? { ...p, comments: updatedPost.comments } : p
-        ),
-      }));
-    }
-  },
-  likeUnlikeComment: ({ postId, commentId, userId, likes, comment: updatedComment, post: updatedPost }) => {
-    if (postId === post._id && updatedPost) {
-      setPosts((prev) => ({
-        ...prev,
-        posts: prev.posts.map((p) => 
-          p._id === postId ? { ...p, comments: updatedPost.comments } : p
-        ),
-      }));
-    }
-  },
-  likeUnlikeReply: ({ postId, commentId, replyId, userId, likes, reply: updatedReply, post: updatedPost }) => {
-    if (postId === post._id && updatedPost) {
-      setPosts((prev) => ({
-        ...prev,
-        posts: prev.posts.map((p) => 
-          p._id === postId ? { ...p, comments: updatedPost.comments } : p
-        ),
-      }));
-    }
-  },
-  editComment: ({ postId, commentId, comment: updatedComment, post: updatedPost }) => {
-    if (postId === post._id && updatedPost) {
-      setPosts((prev) => ({
-        ...prev,
-        posts: prev.posts.map((p) => 
-          p._id === postId ? { ...p, comments: updatedPost.comments } : p
-        ),
-      }));
-    }
-  },
-  editReply: ({ postId, commentId, replyId, reply: updatedReply, post: updatedPost }) => {
-    if (postId === post._id && updatedPost) {
-      setPosts((prev) => ({
-        ...prev,
-        posts: prev.posts.map((p) => 
-          p._id === postId ? { ...p, comments: updatedPost.comments } : p
-        ),
-      }));
-    }
-  },
-  deleteComment: ({ postId, commentId, post: updatedPost }) => {
-    if (postId === post._id && updatedPost) {
-      setPosts((prev) => ({
-        ...prev,
-        posts: prev.posts.map((p) => 
-          p._id === postId ? { ...p, comments: updatedPost.comments } : p
-        ),
-      }));
-      setTotalComments(updatedPost.comments.length);
-    }
-  },
-  deleteReply: ({ postId, commentId, replyId, post: updatedPost }) => {
-    if (postId === post._id && updatedPost) {
-      setPosts((prev) => ({
-        ...prev,
-        posts: prev.posts.map((p) => 
-          p._id === postId ? { ...p, comments: updatedPost.comments } : p
-        ),
-      }));
-    }
-  },
-  postDeleted: ({ postId }) => {
-    if (postId === post._id) {
-      setPosts((prev) => ({
-        ...prev,
-        posts: prev.posts.filter((p) => p._id !== postId),
-      }));
-    }
-  }
-};
+    const handlers = {
+      newComment: ({ postId, comment, post: updatedPost }) => {
+        if (postId === post._id && updatedPost) {
+          setPosts((prev) => ({
+            ...prev,
+            posts: prev.posts.map((p) =>
+              p._id === postId ? { ...p, comments: updatedPost.comments, commentCount: updatedPost.comments.length } : p
+            ),
+          }));
+          setTotalComments(updatedPost.comments.length);
+        }
+      },
+      likeUnlikeComment: ({ postId, commentId, userId, likes, comment: updatedComment, post: updatedPost }) => {
+        if (postId === post._id && updatedPost) {
+          setPosts((prev) => ({
+            ...prev,
+            posts: prev.posts.map((p) =>
+              p._id === postId ? { ...p, comments: updatedPost.comments } : p
+            ),
+          }));
+        }
+      },
+      editComment: ({ postId, commentId, comment: updatedComment, post: updatedPost }) => {
+        if (postId === post._id && updatedPost) {
+          setPosts((prev) => ({
+            ...prev,
+            posts: prev.posts.map((p) =>
+              p._id === postId ? { ...p, comments: updatedPost.comments } : p
+            ),
+          }));
+        }
+      },
+      deleteComment: ({ postId, commentId, post: updatedPost }) => {
+        if (postId === post._id && updatedPost) {
+          setPosts((prev) => ({
+            ...prev,
+            posts: prev.posts.map((p) =>
+              p._id === postId ? { ...p, comments: updatedPost.comments, commentCount: updatedPost.comments.length } : p
+            ),
+          }));
+          setTotalComments(updatedPost.comments.length);
+        }
+      },
+      postDeleted: ({ postId }) => {
+        if (postId === post._id) {
+          setPosts((prev) => ({
+            ...prev,
+            posts: prev.posts.filter((p) => p._id !== postId),
+          }));
+        }
+      },
+    };
 
-      Object.entries(handlers).forEach(([event, handler]) => socket.on(event, handler));
+    Object.entries(handlers).forEach(([event, handler]) => socket.on(event, handler));
 
-      return () => {
-        socket.emit("leavePostRoom", room);
-        console.log(`Left room: ${room}`);
-        Object.keys(handlers).forEach((event) => socket.off(event, handlers[event]));
-      };
-    }
+    return () => {
+      socket.emit("leavePostRoom", room);
+      Object.keys(handlers).forEach((event) => socket.off(event, handlers[event]));
+    };
   }, [socket, post._id, setPosts, showToast]);
 
   const fetchUserData = useCallback(async () => {
@@ -209,7 +170,6 @@ const handlers = {
       setIsLoading(true);
       if (isAdminView && currentUser?.isAdmin) {
         const res = await fetch("/api/users/all", {
-          credentials: "include",
           headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
         });
         const data = await res.json();
@@ -236,7 +196,6 @@ const handlers = {
           return;
         }
         const res = await fetch(`/api/users/profile/${query}`, {
-          credentials: "include",
           headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
         });
         const data = await res.json();
@@ -270,7 +229,6 @@ const handlers = {
       const res = await fetch(`/api/posts/${post._id}`, {
         method: "DELETE",
         headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
-        credentials: "include",
       });
       const data = await res.json();
       if (data.error) {
@@ -310,17 +268,13 @@ const handlers = {
   const handleAddComment = async () => {
     if (!newComment.trim()) return showToast("Error", "Comment cannot be empty", "error");
     try {
-      const endpoint = replyTo
-        ? `/api/posts/post/${post._id}/comment/${replyTo.commentId}/reply`
-        : `/api/posts/post/${post._id}/comment`;
-      const res = await fetch(endpoint, {
+      const res = await fetch(`/api/posts/post/${post._id}/comment`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "Authorization": `Bearer ${localStorage.getItem("token")}`,
+          Authorization: `Bearer ${localStorage.getItem("token")}`,
         },
-        credentials: "include",
-        body: JSON.stringify({ text: newComment, parentId: replyTo?._id }),
+        body: JSON.stringify({ text: newComment }),
       });
       const data = await res.json();
       if (data.error) {
@@ -328,74 +282,57 @@ const handlers = {
         return;
       }
       setNewComment("");
-      setReplyTo(null);
-      showToast("Success", replyTo ? "Reply added" : "Comment added", "success");
-      // Socket event will update comments, no need to call fetchComments
+      showToast("Success", "Comment added", "success");
     } catch (error) {
       showToast("Error", error.message, "error");
     }
   };
 
-  const handleEditComment = async (commentId, text, isReply, parentCommentId) => {
+  const handleEditComment = async (commentId, text) => {
     if (!text.trim()) return showToast("Error", "Comment text cannot be empty", "error");
     try {
-      const endpoint = isReply
-        ? `/api/posts/post/${post._id}/comment/${parentCommentId}/reply/${commentId}`
-        : `/api/posts/post/${post._id}/comment/${commentId}`;
-      const res = await fetch(endpoint, {
+      const res = await fetch(`/api/posts/post/${post._id}/comment/${commentId}`, {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
-          "Authorization": `Bearer ${localStorage.getItem("token")}`,
+          Authorization: `Bearer ${localStorage.getItem("token")}`,
         },
-        credentials: "include",
         body: JSON.stringify({ text }),
       });
       const data = await res.json();
       if (data.error) return showToast("Error", data.error, "error");
       showToast("Success", "Comment updated", "success");
-      // Socket event will update comments, no need to call fetchComments
     } catch (error) {
       showToast("Error", error.message, "error");
     }
   };
 
-  const handleDeleteComment = async (commentId, isReply, parentCommentId) => {
+  const handleDeleteComment = async (commentId) => {
     try {
-      const endpoint = isReply
-        ? `/api/posts/post/${post._id}/comment/${parentCommentId}/reply/${commentId}`
-        : `/api/posts/post/${post._id}/comment/${commentId}`;
-      const res = await fetch(endpoint, {
+      const res = await fetch(`/api/posts/post/${post._id}/comment/${commentId}`, {
         method: "DELETE",
         headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
-        credentials: "include",
       });
       const data = await res.json();
       if (data.error) return showToast("Error", data.error, "error");
       showToast("Success", "Comment deleted successfully", "success");
-      // Socket event will update comments, no need to call fetchComments
     } catch (error) {
       showToast("Error", error.message, "error");
     }
   };
 
-  const handleLikeComment = async (commentId, isReply = false, parentCommentId) => {
+  const handleLikeComment = async (commentId) => {
     if (!commentId) return showToast("Error", "Invalid comment ID", "error");
     try {
-      const endpoint = isReply
-        ? `/api/posts/post/${post._id}/comment/${parentCommentId}/reply/${commentId}/like`
-        : `/api/posts/post/${post._id}/comment/${commentId}/like`;
-      const res = await fetch(endpoint, {
+      const res = await fetch(`/api/posts/post/${post._id}/comment/${commentId}/like`, {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
-          "Authorization": `Bearer ${localStorage.getItem("token")}`,
+          Authorization: `Bearer ${localStorage.getItem("token")}`,
         },
-        credentials: "include",
       });
       const data = await res.json();
       if (data.error) return showToast("Error", data.error, "error");
-      // Socket event will update comments, no need to call fetchComments
     } catch (error) {
       showToast("Error", error.message, "error");
     }
@@ -410,36 +347,25 @@ const handlers = {
     setShowComments((prev) => !prev);
   };
 
+  const getDocumentIcon = (filename) => {
+    const ext = filename?.split(".").pop()?.toLowerCase() || "";
+    switch (ext) {
+      case "pdf": return <BsFileEarmarkTextFill size={24} />;
+      case "zip": return <BsFileZipFill size={24} />;
+      case "doc": case "docx": return <BsFileWordFill size={24} />;
+      case "xls": case "xlsx": return <BsFileExcelFill size={24} />;
+      case "ppt": case "pptx": return <BsFilePptFill size={24} />;
+      case "txt": case "rtf": return <BsFileTextFill size={24} />;
+      default: return <BsFileEarmarkTextFill size={24} />;
+    }
+  };
+
+  const getFileName = () => {
+    return post.originalFilename || post.media?.split("/").pop() || "Unnamed Document";
+  };
+
   const renderPost = (currentPost, postUser) => {
     if (!postUser) return null;
-
-    const getDocumentIcon = (filename) => {
-      const ext = filename?.split(".").pop()?.toLowerCase() || "";
-      switch (ext) {
-        case "pdf":
-          return <BsFileEarmarkTextFill size={24} />;
-        case "zip":
-          return <BsFileZipFill size={24} />;
-        case "doc":
-        case "docx":
-          return <BsFileWordFill size={24} />;
-        case "xls":
-        case "xlsx":
-          return <BsFileExcelFill size={24} />;
-        case "ppt":
-        case "pptx":
-          return <BsFilePptFill size={24} />;
-        case "txt":
-        case "rtf":
-          return <BsFileTextFill size={24} />;
-        default:
-          return <BsFileEarmarkTextFill size={24} />;
-      }
-    };
-
-    const getFileName = () => {
-      return currentPost.originalFilename || currentPost.media?.split("/").pop() || "Unnamed Document";
-    };
 
     return (
       <Box
@@ -696,19 +622,14 @@ const handlers = {
                       sx={{ width: { xs: 24, sm: 32 }, height: { xs: 24, sm: 32 } }}
                     />
                     <Box flex={1}>
-                      {replyTo && (
-                        <Typography variant="caption" color="text.primary" mb={1}>
-                          Replying to {replyTo.username}
-                        </Typography>
-                      )}
                       <TextField
                         fullWidth
                         variant="outlined"
-                        placeholder={replyTo ? "Add a reply..." : "Add a comment..."}
+                        placeholder="Add a comment..."
                         value={newComment}
                         onChange={(e) => setNewComment(e.target.value)}
                         sx={{
-                          bgcolor: "rgba(255, 255, 255, 0.05)",
+                          bgcolor: "background.default",
                           input: { color: "text.primary" },
                           "& .MuiOutlinedInput-root": {
                             "& fieldset": { borderColor: "rgba(255, 255, 255, 0.3)" },
@@ -736,23 +657,19 @@ const handlers = {
 
                 {(currentPost.comments || []).length > 0 ? (
                   <>
-                    {currentPost.comments.map((comment) => {
-                      return (
-                        <CommentItem
-                          key={comment._id}
-                          comment={comment}
-                          depth={0}
-                          currentUser={currentUser}
-                          postId={currentPost._id}
-                          postOwnerId={currentPost.postedBy._id}
-                          topLevelCommentId={comment._id}
-                          onReply={setReplyTo}
-                          onEdit={handleEditComment}
-                          onDelete={handleDeleteComment}
-                          onLike={handleLikeComment}
-                        />
-                      );
-                    })}
+                    {currentPost.comments.map((comment) => (
+                      <CommentItem
+                        key={comment._id}
+                        comment={comment}
+                        depth={0}
+                        currentUser={currentUser}
+                        postId={currentPost._id}
+                        postOwnerId={currentPost.postedBy._id}
+                        onEdit={handleEditComment}
+                        onDelete={handleDeleteComment}
+                        onLike={handleLikeComment}
+                      />
+                    ))}
                     {totalComments > currentPost.comments.length && (
                       <Button
                         onClick={handleLoadMoreComments}
@@ -778,7 +695,7 @@ const handlers = {
   return (
     <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.5 }}>
       {isLoading ? (
-        <Box sx={{ width: { xs: "100%", sm: "90%", md: "600px" }, maxWidth: "600px", mx: { xs: 0, sm: "auto" }, p: { xs: 1, sm: 2 } }}>
+        <Box sx={{ width: { xs: "100%", sm: "90%", md: "600px" }, maxWidth: "600px", mx: "auto", p: { xs: 1, sm: 2 } }}>
           <Box display="flex" gap={2}>
             <Skeleton variant="circular" width={32} height={32} />
             <Box flex={1}>
