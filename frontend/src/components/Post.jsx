@@ -333,6 +333,14 @@ const Post = ({ post, postedBy, isAdminView = false, onBanUnbanPost }) => {
       });
       const data = await res.json();
       if (data.error) return showToast("Error", data.error, "error");
+      if (socket && currentUser) {
+        socket.emit("likeUnlikeComment", {
+          postId: post._id,
+          commentId,
+          userId: currentUser._id,
+          likes: data.likes,
+        });
+      }
     } catch (error) {
       showToast("Error", error.message, "error");
     }

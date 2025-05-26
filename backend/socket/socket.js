@@ -35,22 +35,22 @@ io.use((socket, next) => {
   const userId = socket.handshake.query.userId;
 
   if (!token || !userId) {
-    return next(new Error("Authentication error: Missing token or userId"));
+    return next(new Error("Missing token or userId"));
   }
 
   if (!/^[0-9a-fA-F]{24}$/.test(userId)) {
-    return next(new Error("Authentication error: Invalid userId format"));
+    return next(new Error("Invalid userId format"));
   }
 
   try {
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
     if (decoded.userId !== userId) {
-      return next(new Error("Authentication error: Invalid token"));
+      return next(new Error("Invalid token"));
     }
     socket.userId = userId;
     next();
   } catch (error) {
-    return next(new Error(`Authentication error: ${error.message}`));
+    return next(new Error(`Authentication failed: ${error.message}`));
   }
 });
 
@@ -79,42 +79,27 @@ io.on("connection", (socket) => {
 
   socket.on("syncPostState", async ({ postId }) => {
     try {
-      if (!postId) {
-        socket.emit("error", { message: "Invalid post ID", timestamp: Date.now() });
-        return;
-      }
+      if (!postId) throw new Error("Invalid post ID");
       const populatedPost = await Post.findById(postId)
         .populate("postedBy", "username profilePic")
         .populate("comments.userId", "username profilePic")
         .lean();
-      if (!populatedPost) {
-        socket.emit("error", { message: "Post not found", timestamp: Date.now() });
-        return;
-      }
+      if (!populatedPost) throw new Error("Post not found");
       socket.emit("syncPostState", { postId, post: populatedPost, timestamp: Date.now() });
     } catch (error) {
-      socket.emit("error", { message: `Failed to sync post state: ${error.message}`, timestamp: Date.now() });
+      socket.emit("error", { message: error.message, timestamp: Date.now() });
     }
   });
 
   socket.on("newPost", async (post) => {
     try {
-      if (!post?._id) {
-        socket.emit("error", { message: "Invalid post ID", timestamp: Date.now() });
-        return;
-      }
+      if (!post?._id) throw new Error("Invalid post ID");
       const populatedPost = await Post.findById(post._id)
         .populate("postedBy", "username profilePic")
         .lean();
-      if (!populatedPost) {
-        socket.emit("error", { message: "Post not found", timestamp: Date.now() });
-        return;
-      }
+      if (!populatedPost) throw new Error("Post not found");
       const user = await User.findById(post.postedBy).select("following").lean();
-      if (!user) {
-        socket.emit("error", { message: "User not found", timestamp: Date.now() });
-        return;
-      }
+      if (!user) throw new Error("User not found");
       const followerIds = [...(user.following || []), post.postedBy.toString()];
       followerIds.forEach((followerId) => {
         const socketId = getRecipientSocketId(followerId);
@@ -122,55 +107,51 @@ io.on("connection", (socket) => {
       });
       io.emit("newFeedPost", populatedPost, { timestamp: Date.now() });
     } catch (error) {
-      socket.emit("error", { message: `Failed to broadcast new post: ${error.message}`, timestamp: Date.now() });
+      socket.emit("error", { message: error.message, timestamp: Date.now() });
     }
   });
 
   socket.on("newComment", async ({ postId, comment }) => {
     try {
-      if (!postId || !comment?._id) {
-        socket.emit("error", { message: "Invalid post or comment ID", timestamp: Date.now() });
-        return;
-      }
+      if (!postId || !comment?._id) throw new Error("Invalid post or comment ID");
       const populatedComment = await Post.findOne(
         { _id: postId, "comments._id": comment._id },
         { "comments.$": 1 }
       )
         .populate("comments.userId", "username profilePic")
         .lean();
-      if (!populatedComment) {
-        socket.emit("error", { message: "Comment not found", timestamp: Date.now() });
-        return;
-      }
+      if (!populatedComment) throw new Error("Comment not found");
       const populatedPost = await Post.findById(postId)
         .populate("postedBy", "username profilePic")
         .populate("comments.userId", "username profilePic")
         .lean();
+      if (!populatedPost) throw new Error("Post not found");
       io.to(`post:${postId}`).emit("newComment", {
         postId,
-        comment: populatedComment.comments[0],
+        comment: {
+          ...populatedComment.comments[0],
+          userId: {
+            _id: populatedComment.comments[0].userId._id,
+            username: populatedComment.comments[0].userId.username || "Unknown User",
+            profilePic: populatedComment.comments[0].userId.profilePic || "/default-avatar.png",
+          },
+        },
         post: populatedPost,
         timestamp: Date.now(),
       });
     } catch (error) {
-      socket.emit("error", { message: `Failed to broadcast new comment: ${error.message}`, timestamp: Date.now() });
+      socket.emit("error", { message: error.message, timestamp: Date.now() });
     }
   });
 
   socket.on("likeUnlikePost", async ({ postId, userId, likes }) => {
     try {
-      if (!postId || !userId) {
-        socket.emit("error", { message: "Invalid post or user ID", timestamp: Date.now() });
-        return;
-      }
+      if (!postId || !userId) throw new Error("Invalid post or user ID");
       const populatedPost = await Post.findById(postId)
         .populate("postedBy", "username profilePic")
         .populate("comments.userId", "username profilePic")
         .lean();
-      if (!populatedPost) {
-        socket.emit("error", { message: "Post not found", timestamp: Date.now() });
-        return;
-      }
+      if (!populatedPost) throw new Error("Post not found");
       io.to(`post:${postId}`).emit("likeUnlikePost", {
         postId,
         userId,
@@ -180,26 +161,20 @@ io.on("connection", (socket) => {
         timestamp: Date.now(),
       });
     } catch (error) {
-      socket.emit("error", { message: `Failed to broadcast like/unlike: ${error.message}`, timestamp: Date.now() });
+      socket.emit("error", { message: error.message, timestamp: Date.now() });
     }
   });
 
   socket.on("likeUnlikeComment", async ({ postId, commentId, userId, likes }) => {
     try {
-      if (!postId || !commentId || !userId) {
-        socket.emit("error", { message: "Invalid post, comment, or user ID", timestamp: Date.now() });
-        return;
-      }
+      if (!postId || !commentId || !userId) throw new Error("Invalid post, comment, or user ID");
       const populatedComment = await Post.findOne(
         { _id: postId, "comments._id": commentId },
         { "comments.$": 1 }
       )
         .populate("comments.userId", "username profilePic")
         .lean();
-      if (!populatedComment) {
-        socket.emit("error", { message: "Comment not found", timestamp: Date.now() });
-        return;
-      }
+      if (!populatedComment) throw new Error("Comment not found");
       const populatedPost = await Post.findById(postId)
         .populate("postedBy", "username profilePic")
         .populate("comments.userId", "username profilePic")
@@ -209,31 +184,32 @@ io.on("connection", (socket) => {
         commentId,
         userId,
         likes,
-        comment: populatedComment.comments[0],
+        comment: {
+          ...populatedComment.comments[0],
+          userId: {
+            _id: populatedComment.comments[0].userId._id,
+            username: populatedComment.comments[0].userId.username || "Unknown User",
+            profilePic: populatedComment.comments[0].userId.profilePic || "/default-avatar.png",
+          },
+        },
         post: populatedPost,
         timestamp: Date.now(),
       });
     } catch (error) {
-      socket.emit("error", { message: `Failed to broadcast comment like/unlike: ${error.message}`, timestamp: Date.now() });
+      socket.emit("error", { message: error.message, timestamp: Date.now() });
     }
   });
 
   socket.on("editComment", async ({ postId, commentId, comment }) => {
     try {
-      if (!postId || !commentId || !comment?._id) {
-        socket.emit("error", { message: "Invalid post or comment ID", timestamp: Date.now() });
-        return;
-      }
+      if (!postId || !commentId || !comment?._id) throw new Error("Invalid post or comment ID");
       const populatedComment = await Post.findOne(
         { _id: postId, "comments._id": commentId },
         { "comments.$": 1 }
       )
         .populate("comments.userId", "username profilePic")
         .lean();
-      if (!populatedComment) {
-        socket.emit("error", { message: "Comment not found", timestamp: Date.now() });
-        return;
-      }
+      if (!populatedComment) throw new Error("Comment not found");
       const populatedPost = await Post.findById(postId)
         .populate("postedBy", "username profilePic")
         .populate("comments.userId", "username profilePic")
@@ -241,49 +217,50 @@ io.on("connection", (socket) => {
       io.to(`post:${postId}`).emit("editComment", {
         postId,
         commentId,
-        comment: populatedComment.comments[0],
+        comment: {
+          ...populatedComment.comments[0],
+          userId: {
+            _id: populatedComment.comments[0].userId._id,
+            username: populatedComment.comments[0].userId.username || "Unknown User",
+            profilePic: populatedComment.comments[0].userId.profilePic || "/default-avatar.png",
+          },
+        },
         post: populatedPost,
         timestamp: Date.now(),
       });
     } catch (error) {
-      socket.emit("error", { message: `Failed to broadcast edit comment: ${error.message}`, timestamp: Date.now() });
+      socket.emit("error", { message: error.message, timestamp: Date.now() });
     }
   });
 
   socket.on("deleteComment", async ({ postId, commentId }) => {
     try {
-      if (!postId || !commentId) {
-        socket.emit("error", { message: "Invalid post or comment ID", timestamp: Date.now() });
-        return;
-      }
+      if (!postId || !commentId) throw new Error("Invalid post or comment ID");
       const populatedPost = await Post.findById(postId)
         .populate("postedBy", "username profilePic")
         .populate("comments.userId", "username profilePic")
         .lean();
+      if (!populatedPost) throw new Error("Post not found");
       io.to(`post:${postId}`).emit("deleteComment", { postId, commentId, post: populatedPost, timestamp: Date.now() });
     } catch (error) {
-      socket.emit("error", { message: `Failed to broadcast delete comment: ${error.message}`, timestamp: Date.now() });
+      socket.emit("error", { message: error.message, timestamp: Date.now() });
     }
   });
 
   socket.on("postDeleted", async ({ postId, userId }) => {
     try {
-      if (!postId || !userId) {
-        socket.emit("error", { message: "Invalid post or user ID", timestamp: Date.now() });
-        return;
-      }
+      if (!postId || !userId) throw new Error("Invalid post or user ID");
       io.to(`post:${postId}`).emit("postDeleted", { postId, userId, timestamp: Date.now() });
       io.emit("postDeletedFromFeed", { postId, timestamp: Date.now() });
     } catch (error) {
-      socket.emit("error", { message: `Failed to broadcast post deleted: ${error.message}`, timestamp: Date.now() });
+      socket.emit("error", { message: error.message, timestamp: Date.now() });
     }
   });
 
   socket.on("newMessage", async (message) => {
     try {
       if (!message?.recipientId || !message?.sender?._id || !message?.conversationId) {
-        socket.emit("error", { message: "Invalid message data", timestamp: Date.now() });
-        return;
+        throw new Error("Invalid message data");
       }
       const recipientSocketId = getRecipientSocketId(message.recipientId);
       const senderSocketId = getRecipientSocketId(message.sender._id);
@@ -294,25 +271,19 @@ io.on("connection", (socket) => {
         io.to(senderSocketId).emit("newMessage", { ...message, timestamp: Date.now() });
       }
     } catch (error) {
-      socket.emit("error", { message: `Failed to broadcast new message: ${error.message}`, timestamp: Date.now() });
+      socket.emit("error", { message: error.message, timestamp: Date.now() });
     }
   });
 
   socket.on("messageDelivered", async ({ messageId, conversationId, recipientId }) => {
     try {
-      if (!messageId || !conversationId || !recipientId) {
-        socket.emit("error", { message: "Invalid message delivered data", timestamp: Date.now() });
-        return;
-      }
+      if (!messageId || !conversationId || !recipientId) throw new Error("Invalid message delivered data");
       const updatedMessage = await Message.findByIdAndUpdate(
         messageId,
         { status: "delivered" },
         { new: true }
       ).lean();
-      if (!updatedMessage) {
-        socket.emit("error", { message: "Message not found", timestamp: Date.now() });
-        return;
-      }
+      if (!updatedMessage) throw new Error("Message not found");
       const senderSocketId = getRecipientSocketId(updatedMessage.sender._id);
       const recipientSocketId = getRecipientSocketId(recipientId);
       if (senderSocketId) {
@@ -322,21 +293,15 @@ io.on("connection", (socket) => {
         io.to(recipientSocketId).emit("messageDelivered", { messageId, conversationId, timestamp: Date.now() });
       }
     } catch (error) {
-      socket.emit("error", { message: `Failed to broadcast message delivered: ${error.message}`, timestamp: Date.now() });
+      socket.emit("error", { message: error.message, timestamp: Date.now() });
     }
   });
 
   socket.on("markMessagesAsSeen", async ({ conversationId, userId }) => {
     try {
-      if (!conversationId || !userId) {
-        socket.emit("error", { message: "Invalid mark messages data", timestamp: Date.now() });
-        return;
-      }
+      if (!conversationId || !userId) throw new Error("Invalid mark messages data");
       const conversation = await Conversation.findById(conversationId).lean();
-      if (!conversation) {
-        socket.emit("error", { message: "Conversation not found", timestamp: Date.now() });
-        return;
-      }
+      if (!conversation) throw new Error("Conversation not found");
 
       const messages = await Message.find({
         conversationId,
@@ -369,7 +334,7 @@ io.on("connection", (socket) => {
         }
       });
     } catch (error) {
-      socket.emit("error", { message: `Failed to broadcast messages seen: ${error.message}`, timestamp: Date.now() });
+      socket.emit("error", { message: error.message, timestamp: Date.now() });
     }
   });
 
@@ -405,7 +370,7 @@ io.on("connection", (socket) => {
   });
 
   socket.on("error", (error) => {
-    socket.emit("error", { message: `Socket error: ${error.message}`, timestamp: Date.now() });
+    socket.emit("error", { message: error.message, timestamp: Date.now() });
   });
 });
 

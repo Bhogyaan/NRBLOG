@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from "react";
+import React, { useState, useCallback, useContext } from "react";
 import { useRecoilValue, useRecoilState } from "recoil";
 import userAtom from "../atoms/userAtom";
 import postsAtom from "../atoms/postsAtom";
@@ -21,6 +21,7 @@ import {
 } from "@mui/icons-material";
 import { Flex as AntdFlex } from "antd";
 import { motion } from "framer-motion";
+import { SocketContext } from "../context/SocketContext";
 
 const Actions = ({ post, onCommentClick }) => {
   const user = useRecoilValue(userAtom);
@@ -30,6 +31,7 @@ const Actions = ({ post, onCommentClick }) => {
   const [isLiking, setIsLiking] = useState(false);
   const showToast = useShowToast();
   const { handleBookmark, isBookmarking } = useBookmark();
+  const { socket } = useContext(SocketContext);
 
   const handleLikeAndUnlike = useCallback(async () => {
     if (!user) {
@@ -67,12 +69,20 @@ const Actions = ({ post, onCommentClick }) => {
         ),
       }));
       setLiked((prev) => !prev);
+      // Emit real-time like/unlike event
+      if (socket) {
+        socket.emit("likeUnlikePost", {
+          postId: post._id,
+          userId: user._id,
+          likes: data.likes,
+        });
+      }
     } catch (error) {
       showToast("Error", error.message, "error");
     } finally {
       setIsLiking(false);
     }
-  }, [user, isLiking, post._id, showToast, setPostsState]);
+  }, [user, isLiking, post._id, showToast, setPostsState, socket]);
 
   const onBookmarkClick = useCallback(async () => {
     if (!user) {
